@@ -7,6 +7,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf_viewer.min.css">
     
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    
     <style>
         /* --- 极致自适应液态磨砂主题 (Liquid Frosted Theme) --- */
         :root {
@@ -113,22 +115,21 @@
 
         .pdf-page-container {
             position: relative;
-            margin: 0; 
+            margin: 0 auto; 
             padding: 0;
             line-height: 0;
             background: #f1ebd7;
             box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-            width: 100% !important;
             border-bottom: 1px solid rgba(0,0,0,0.05);
+            /* 移除了 width: 100% !important，强制容器与 Canvas 像素绝对绑定，避免拖拽时剥离 */
         }
 
         .pdf-page-container canvas {
             display: block;
-            width: 100% !important;
-            height: auto !important;
+            /* 移除了 width: 100% 和 height: auto，防止 Canvas 橡皮筋伸缩而文字层不伸缩 */
             transition: filter 0.3s ease;
-            mix-blend-mode: multiply; /* 正片叠底：消除 Canvas 的纯白背景，使其透出底部的护眼米黄色 */
-            filter: sepia(0.5) contrast(0.95); /* 注入复古纸张调和，降低高频亮光，让纸质感更柔和沉稳 */
+            mix-blend-mode: multiply;
+            filter: sepia(0.5) contrast(0.95);
         }
 
         .pdf-panel.invert-mode canvas {
@@ -443,6 +444,8 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
         let localDictDb = null;
         let currentPdfDoc = null;
         let pageObserver = null; // 全局懒加载观察者
+        let tesseractWorker = null; // 离线 OCR 线程
+        const ocrCache = new Map(); // 🌟 内存级持久化缓存 (防止重绘重复扫描)
 
         // 点击偏移校准：正值向下移动点击位置，负值向上移动。如果点高了就调大，点低了就调小。
         const CLICK_Y_OFFSET = 0; 
@@ -503,6 +506,22 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
             };
             reader.readAsText(file);
         });
+
+        // 0. 初始化离线后台 OCR 引擎（极致兼容本地及主屏幕沙盒环境）
+        async function initOcrEngine() {
+            if (tesseractWorker) return;
+            try {
+                // 强制开启本地沙盒内联 Worker 兼容模式，防止浏览器跨域阻拦
+                tesseractWorker = await Tesseract.createWorker('eng', 1, {
+                    workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
+                    corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core.wasm.js',
+                    cacheMethod: 'write'
+                });
+                console.log("✅ 离线英文 OCR 引擎后台挂载成功");
+            } catch (e) {
+                console.error("❌ OCR 引擎初始化失败:", e);
+            }
+        }
 
         // 1. 初始化数据库
         function initDictDB() {
@@ -679,6 +698,9 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
             if (!file) return;
             loadingOverlay.style.display = 'block';
             document.getElementById('loading-text').innerText = "正在解析文档结构...";
+            
+            ocrCache.clear(); // 🌟 切换新文档时，彻底清空旧文档的 OCR 缓存
+            
             const fileReader = new FileReader();
             fileReader.onload = function() {
                 const typedarray = new Uint8Array(this.result);
@@ -820,7 +842,89 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
                     viewport: viewport 
                 }).promise;
 
-                const textContent = await page.getTextContent();
+                let textContent = await page.getTextContent();
+                
+                // 📸 核心机制：严格扫描版判断条件 (过滤掉扫描仪自动生成的幽灵字符，降低误伤率)
+                const validTextCount = textContent ? textContent.items.filter(item => item.str.trim().length > 0).length : 0;
+                
+                if (validTextCount < 5) {
+                    let unscaledWords = ocrCache.get(pageNum); // 🌟 核心：查缓存，获取绝对基础坐标
+
+                    if (!unscaledWords) { 
+                        // 只有未缓存过的页面，才执行真正的重度 OCR 扫描
+                        const ocrMask = document.createElement('div');
+                        ocrMask.style = "position:absolute; top:12px; left:12px; background:rgba(14,165,233,0.9); color:#fff; padding:8px 16px; border-radius:20px; font-size:14px; font-weight:bold; z-index:50; backdrop-filter:blur(4px); box-shadow:0 4px 12px rgba(0,0,0,0.2); animation:fadeIn 0.3s;";
+                        ocrMask.innerText = "⏳ 正在启动离线 OCR 识别本页...";
+                        container.appendChild(ocrMask);
+
+                        try {
+                            if (!tesseractWorker) {
+                                ocrMask.innerText = "⏳ 正在下载 OCR 核心组件 (首次需几秒)...";
+                                await initOcrEngine();
+                            }
+                            
+                            if (tesseractWorker) {
+                                ocrMask.innerText = "🔍 智能提取文字中 (约耗时2-5秒)...";
+                                const imgDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                                const { data } = await tesseractWorker.recognize(imgDataUrl);
+
+                                if (data.words && data.words.length > 0) {
+                                    // 🌟 致命级修正：绝不能直接存像素，必须将 Tesseract 的像素转为 1.0 倍数的绝对基准数学坐标再存！
+                                    const oldTotalScale = scale * outputScale;
+                                    unscaledWords = data.words.map(w => ({
+                                        text: w.text,
+                                        x: w.bbox.x0 / oldTotalScale,
+                                        y: unscaledViewport.height - (w.bbox.y1 / oldTotalScale),
+                                        width: (w.bbox.x1 - w.bbox.x0) / oldTotalScale,
+                                        height: (w.bbox.y1 - w.bbox.y0) / oldTotalScale
+                                    }));
+                                    
+                                    ocrCache.set(pageNum, unscaledWords); // 永久固化绝对坐标！
+                                    
+                                    ocrMask.style.background = "rgba(16,185,129,0.9)";
+                                    ocrMask.innerText = "✨ 识别完成，可双击点读！";
+                                } else {
+                                    ocrMask.style.background = "rgba(245,158,11,0.9)";
+                                    ocrMask.innerText = "⚠️ 本页未识别到清晰英文";
+                                }
+                                setTimeout(() => ocrMask.remove(), 2500);
+                            } else {
+                                throw new Error("引擎未就绪");
+                            }
+                        } catch (err) {
+                            console.error("OCR 流程崩溃:", err);
+                            ocrMask.style.background = "rgba(239,68,68,0.9)";
+                            ocrMask.innerText = "❌ 本地安全策略拦截了 OCR 组件，请部署到网站上使用";
+                        }
+                    }
+
+                    // 🌟 核心：无论走新扫描还是秒读缓存，现在拿到的全都是绝对数学坐标！
+                    // 直接送入 textLayer 即可，PDF.js 会根据当前新的缩放比自动将文字完美吸附！
+                    if (unscaledWords && unscaledWords.length > 0) {
+                        const mockItems = unscaledWords.map(nw => {
+                            return {
+                                str: nw.text + " ",
+                                dir: "ltr",
+                                width: nw.width,
+                                height: nw.height,
+                                transform: [nw.height, 0, 0, nw.height, nw.x, nw.y],
+                                fontName: "ocr_font_fake"
+                            };
+                        });
+                        textContent = { 
+                            items: mockItems, 
+                            styles: {
+                                "ocr_font_fake": {
+                                    fontFamily: "sans-serif",
+                                    ascent: 1.05,
+                                    descent: -0.25,
+                                    vertical: false
+                                }
+                            } 
+                        };
+                    }
+                }
+
                 pdfjsLib.renderTextLayer({
                     textContent: textContent,
                     container: textLayerDiv,
@@ -918,6 +1022,7 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
 
         window.addEventListener('DOMContentLoaded', () => {
             initDictDB();
+            initOcrEngine();
             
             // 检测 iOS 并开启隐形点读模式
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
