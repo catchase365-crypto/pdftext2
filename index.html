@@ -427,7 +427,7 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
                         READY
                     </div>
                     <p style="text-align: center; opacity: 0.5; font-size: 0.9rem; margin-top: 10px;">
-                        双击或点击左侧文献中的单词进行即时点读
+                        单击单词进行即时点读
                     </p>
                 </div>
             </div>
@@ -882,7 +882,7 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
                                     ocrCache.set(pageNum, unscaledWords); // 永久固化绝对坐标！
                                     
                                     ocrMask.style.background = "rgba(16,185,129,0.9)";
-                                    ocrMask.innerText = "✨ 识别完成，可双击点读！";
+                                    ocrMask.innerText = "✨ 识别完成，可单击点读！";
                                 } else {
                                     ocrMask.style.background = "rgba(245,158,11,0.9)";
                                     ocrMask.innerText = "⚠️ 本页未识别到清晰英文";
