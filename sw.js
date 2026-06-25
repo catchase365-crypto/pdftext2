@@ -1,5 +1,5 @@
-var C='v_1782279154626';
-var assets = ['./', './index.html', './manifest.json', 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'];
+var C='v_1782367311248';
+var assets = ['./', './index.html', './manifest.json', 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js', 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js'];
 self.addEventListener('install', e => e.waitUntil(caches.open(C).then(c => c.addAll(assets)).then(() => self.skipWaiting())));
 self.addEventListener('activate', e => e.waitUntil(caches.keys().then(keys => Promise.all(keys.map(k => k !== C && caches.delete(k)))).then(() => self.clients.claim())));
 self.addEventListener('fetch', e => {
