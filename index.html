@@ -399,6 +399,10 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
             <div class="pdf-viewer-content" id="pdfViewerContent">
                 <div class="welcome-box">
                     <p style="font-size: 1.2rem; margin-bottom: 15px;">欢迎使用 PDF 智能点读机</p>
+                <div style="display: flex; gap: 10px; justify-content: center;">
+                    <button class="btn-action" style="background: #10b981; color: white;" onclick="window.open('https://pan.baidu.com/s/14GMNwej_AcuATzZvWQyI5A', '_blank')">🔗 跳转词库网盘</button>
+                    <button class="btn-action" style="background: #8b5cf6; color: white;" onclick="navigator.clipboard.writeText('链接: https://pan.baidu.com/s/14GMNwej_AcuATzZvWQyI5A 提取码: 9d87').then(() => alert('✅ 词库分享信息已复制到剪贴板！'))">📋 复制词库百度盘链接</button>
+                </div>
                 </div>
             </div>
             
