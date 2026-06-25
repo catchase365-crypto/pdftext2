@@ -569,10 +569,12 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
                     // 收集当前数据块内解出来的词条，在无 await 的同步循环里打包，最后统一开短事务写入
                     let parsedItems = [];
 
-                    // 智能边界动态滑动窗口：弹性应对超长词条，杜绝一切斩断风险
+                    // 🍏 iOS 深度兼容版：带安全阀的小口吞咽滑动窗口
                     while (buffer.length > 30000) {
-                        // 使用当前 buffer 长度的 80% 作为解析窗口，留下 20% 作为安全缓冲带
-                        const parseLimit = Math.floor(buffer.length * 0.8);
+                        // 核心修复：Safari 的 FileReader stream 有时会直接吐出几百兆的整块数据！
+                        // 苹果 JS 引擎 (JavaScriptCore) 在对过大字符串执行正则时会直接崩溃报错或返回 null。
+                        // 必须在此加盖“天花板”（最大 15 万字符），强制把大块切碎。
+                        const parseLimit = Math.min(Math.floor(buffer.length * 0.8), 150000);
                         const chunkToParse = buffer.substring(0, parseLimit);
                         const kvRegex = /"([^\x00-\x1f"\\]*(?:\\["\\\/bfnrt]|\\u[0-9a-fA-F]{4})*)"\s*:\s*("[^"\\]*(?:\\.[^"\\]*)*"|\{[^\}]+\})/g;
                         let match;
@@ -599,17 +601,12 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
                         }
                         
                         if (lastCutIndex > 0) {
-                            // 正常情况：裁掉已经完美解析的合法区段
+                            // 正常裁切
                             buffer = buffer.substring(lastCutIndex);
                         } else {
-                            // 极端情况：遇到了长到离谱的单一词条（超过了 parseLimit 还没有结束）。
-                            // 绝不强行剪裁！直接退出内层循环，去外部继续吸取文件流，让 buffer 胀大，直到吞下整个长词条。
-                            // 为了防止坏文件导致内存无限膨胀崩溃，设置一个 2MB 的物理防爆阀。
-                            if (buffer.length > 2000000) {
-                                console.warn("警告：检测到疑似损坏的 JSON 结构或超 2MB 的变态词条，进行强制垃圾回收");
-                                buffer = buffer.substring(1000000);
-                            }
-                            break;
+                            // 极端异常：如果 15 万字里没匹配到一个合法词条（遇到乱码或极其变态单条数据）
+                            // 直接暴力推进 10 万字。绝对不能用 break 跳出，否则巨型 buffer 堆积到最后的 finalRegex 会再次炸毁 iOS！
+                            buffer = buffer.substring(100000);
                         }
                     }
 
