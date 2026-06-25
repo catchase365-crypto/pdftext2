@@ -368,8 +368,32 @@
         .welcome-box {
             text-align: center;
             padding: 40px 20px;
-            opacity: 0.8;
             width: 100%;
+            color: #2b261f; /* 浅色模式默认深色字 */
+            transition: color 0.3s;
+        }
+
+        .pdf-panel.invert-mode .welcome-box {
+            color: #f8fafc; /* 深色模式反转为浅色字 */
+        }
+
+        #guide-container {
+            margin-top: 25px; 
+            padding: 20px; 
+            background: rgba(0, 0, 0, 0.04); 
+            border-radius: 12px; 
+            text-align: left; 
+            font-size: 0.9rem; 
+            line-height: 1.6; 
+            max-height: 300px; 
+            overflow-y: auto; 
+            border: 1px solid rgba(0, 0, 0, 0.08);
+            transition: all 0.3s;
+        }
+
+        .pdf-panel.invert-mode #guide-container {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
     </style>
 
@@ -402,6 +426,35 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
                 <div style="display: flex; gap: 10px; justify-content: center;">
                     <button class="btn-action" style="background: #10b981; color: white;" onclick="window.open('https://pan.baidu.com/s/14GMNwej_AcuATzZvWQyI5A', '_blank')">🔗 跳转词库网盘</button>
                     <button class="btn-action" style="background: #8b5cf6; color: white;" onclick="navigator.clipboard.writeText('链接: https://pan.baidu.com/s/14GMNwej_AcuATzZvWQyI5A 提取码: 9d87').then(() => alert('✅ 词库分享信息已复制到剪贴板！'))">📋 复制词库百度盘链接</button>
+                </div>
+                <div id="guide-container">
+                    <div>
+                        <p>这是一份专为移动端（iOS / iPadOS / Android）优化的 <strong>PDF 智能点读机 & PWA 网页应用</strong> 深度使用指南。通过本教程，你可以将该网页完美转化为一个<strong>无边框、全屏沉浸式、自带本地词态还原内核</strong>的独立文献点读 App。</p>
+                        <h3>📱 第一步：全屏沉浸式 App 化（PWA 模式安装）</h3>
+                        <p>为了获得媲美原生 App 的无缝全屏体验，强烈建议不要直接在常规浏览器标签页中使用，而是将其<strong>“添加到主屏幕”</strong>。</p>
+                        <h4>🍏 iPad / iPhone 用户 (Safari 浏览器)</h4>
+                        <p> 1. 使用 <strong>Safari 浏览器</strong> 打开该点读机网页。<br> 2. 点击浏览器右上角（iPad）或底部（iPhone）的 <strong>“分享”按钮</strong>（带有向上箭头的方框图标）。<br> 3. 在弹出的菜单中向下滚动，找到并点击 <strong>“添加到主屏幕”</strong> (Add to Home Screen)。<br> 4. 点击右上角确认。此时，你的主屏幕上会生成一个名为“PDF 点读机”的独立图标。<br> 5. <strong>退出 Safari，从主屏幕点击这个新图标打开</strong>。你会发现顶部的网址栏和底部工具栏全部消失了，转为全屏纯净模式！</p>
+                        <h4>🤖 Android 用户 (Chrome 或三星浏览器)</h4>
+                        <p> 1. 使用 <strong>Chrome 浏览器</strong>（或手机自带的原生高级浏览器）打开该网页。<br> 2. 点击右上角的 <strong>“三个点”菜单</strong>。<br> 3. 找到并点击 <strong>“安装应用”</strong> 或 <strong>“添加到主屏幕”</strong>。<br> 4. 确认后，系统会自动在桌面生成一个 <strong>PWA 网页应用</strong> 图标。<br> 5. <strong>从桌面图标点击进入</strong>，即可锁定高性能原生沙盒环境，并强制调用系统级“文档驱动”，极大提升大文件秒开速度。</p>
+                        <h3>📥 第二步：一键导入本地词库</h3>
+                        <p>本工具核心优势在于<strong>完全本地化运行</strong>，绝不上传任何隐私。首次使用需要加载你的词典数据库。</p>
+                        <p> 1. <strong>获取词库</strong>：词库的网盘下载链接已内嵌在网页中，请先将扩展名为 .json 的词库文件下载到手机本地（或平板的“文件”App 中）。<br> 2. <strong>挂载词库</strong>：点击右上角的 <strong>⚙️ (设置)</strong> 展开控制栏，点击 <strong>“📥 词库”</strong> 按钮。<br> 3. <strong>选取文件</strong>：在弹出的系统文件选择器中，选中刚刚下载的 .json 词库文件。<br> 4. <strong>耐心等待（关键）</strong>：由于移动端设备的内存管理机制各异，导入包含数万词条的庞大词库时，可能需要 <strong>30 秒至 1 分钟</strong>。在这期间请保持界面停留，不要切出 App。<br> 5. <strong>若遇闪退/卡顿</strong>：</p>
+                        <blockquote>⚠️ <strong>注意</strong>：部分配置较低的设备在解析超大 JSON 时可能会因内存瞬间被卡住而出现闪退或无响应。<strong>不用担心，这属于正常沙盒保护</strong>。如果发生闪退，只需彻底关闭进程后重新打开 App，再次导入一次，直到屏幕弹出 “✅ 智能多模词库导入成功！” 的提示，即代表数据已永久安全地写入你设备本地的 IndexedDB 数据库中，以后打开无需重复导入。</blockquote>
+                        <h3>📖 第三步：文献点读与核心功能体验</h3>
+                        <p>词库导入成功后，即可享受极为流畅的高清文献阅读与“哪里不会点哪里”的查词体验：</p>
+                        <h4>1. 📂 导入 PDF 文献</h4>
+                        <p>点击 <strong>“📂 PDF”</strong> 按钮，从本地选择你要阅读的 PDF 电子书或学术论文。<br> * <strong>底层优化</strong>：网页内置了<strong>智能虚拟懒加载引擎</strong>。无论你的文献是几百页还是上千页，它都只会渲染你眼前看到的和上下缓冲的区域，自动释放视野外的内存，从根本上防止移动端因内存溢出（OOM）而崩溃。</p>
+                        <h4>2. ⚡ 触控点读与双击取词</h4>
+                        <p> * <strong>标准取词</strong>：直接<strong>轻点</strong>或者<strong>双击</strong>文献中的英文单词，右侧词典面板会瞬间弹出释义，并自动调用系统级纯正美音进行发音。<br> * <strong>iOS 无痕点读模式</strong>：代码中专门针对苹果生态进行了底层微调。在 iPad/iPhone 上点读时，系统自带的烦人“蓝色选择双杆”和长按弹出菜单已被<strong>彻底隐形化</strong>，点击即可取词，带来丝滑、无遮挡的纯净阅读感。</p>
+                        <h4>3. 🧠 本地高级词态还原内核</h4>
+                        <p>当你点击一个衍生词（如动词过去式 stopped、复数 ies、副词 surgically、现在分词 dying 等）时，如果词库里没有这个死板的词条，<strong>内核会瞬间启动 5 级、数十种严谨的变形规则自动逆向推导</strong>，查找到其原形（如 stop / surgical / die）并呈现完美释义。</p>
+                        <h4>4. 🌗 🌓 模式联动（夜间护眼）</h4>
+                        <p>点击 <strong>“🌓 模式”</strong> 按钮，可一键切换主题：<br> * <strong>白天模式</strong>：采用温润的<strong>羊皮纸护眼色</strong>（深度调和调深后的米黄书页色），消除高频亮光，让纸质感沉稳柔和。<br> * <strong>反色模式（暗黑模式）</strong>：PDF 画布与词典全面进入深色调。同时，代码中加入了特制滤镜，能自动将深色模式下原本看不清的<strong>深蓝音标、蓝色词头自动转化为高亮黄加粗</strong>，确保暗光下阅读不费眼。</p>
+                        <h4>5. ↔️ 自由拖拽分栏</h4>
+                        <p>用手指按住中间的 <strong>垂直分割线</strong> 并左右滑动，可以实时调节左侧 PDF 视图与右侧词典面板的比例（完美适配横屏 iPad 与竖屏手机）。</p>
+                        <h3>💻 补充建议（关于电脑端）</h3>
+                        <p>本工具是专为<strong>移动端平板和手机量身定制的轻量化免翻墙神器</strong>。<br>如果你在<strong>电脑端（Windows / Mac）</strong>看论文，建议直接使用 Chrome 浏览器搭配“欧路词典”或“沙拉查词”等成熟的鼠标悬停取词插件，效率会更高、更方便！移动端的全屏沉浸点读，交给这个 PWA App 就足够了。</p>
+                    </div>
                 </div>
                 </div>
             </div>
