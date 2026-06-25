@@ -516,52 +516,155 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
         const contentArea = document.getElementById('dict-content-area');
         const loadingOverlay = document.getElementById('loadingOverlay');
 
-                // 核心修复：智能多模词库导入内核（完美兼容 wordany 词库）
-        dictFilePicker.addEventListener('change', (e) => {
+                // 方案二改版：超低内存流式 JSON 匹配内核（带百分比进度，先删后登）
+        dictFilePicker.addEventListener('change', async (e) => {
             const file = e.target.files[0];
             if (!file || !localDictDb) return;
-            const reader = new FileReader();
-            reader.onload = (evt) => {
-                try {
-                    const data = JSON.parse(evt.target.result);
-                    const tx = localDictDb.transaction([DICT_STORE_NAME], "readwrite");
-                    const store = tx.objectStore(DICT_STORE_NAME);
-                    
-                    let importedCount = 0;
-                    
-                    // 1. 如果是标准的数组格式
-                    if (Array.isArray(data)) {
-                        data.forEach(item => {
-                            if (item && item.word) {
-                                store.put({ word: item.word.toLowerCase(), translation: item.translation });
+
+            loadingOverlay.style.display = 'block';
+            document.getElementById('loading-text').innerText = "正在清理旧词库...";
+
+            try {
+                // 1. 异步清空当前子域名下的旧词库
+                await new Promise((resolve, reject) => {
+                    const clearTx = localDictDb.transaction([DICT_STORE_NAME], "readwrite");
+                    const clearStore = clearTx.objectStore(DICT_STORE_NAME);
+                    const clearReq = clearStore.clear();
+                    clearReq.onsuccess = () => resolve();
+                    clearReq.onerror = () => reject(new Error("清理旧词库失败"));
+                });
+
+                document.getElementById('loading-text').innerText = "准备流式解析 0%";
+
+                // 2. 开启流式低内存流读取器
+                const totalBytes = file.size;
+                let loadedBytes = 0;
+                const stream = file.stream();
+                const reader = stream.getReader();
+                const decoder = new TextDecoder("utf-8");
+
+                let tx = localDictDb.transaction([DICT_STORE_NAME], "readwrite");
+                let store = tx.objectStore(DICT_STORE_NAME);
+
+                let buffer = "";
+                let importedCount = 0;
+                let batchSize = 0;
+                let lastPercent = 0;
+
+                // 高性能状态机逻辑：块级流式读取，在同步解析块中创建局部短事务防超时
+                while (true) {
+                    // 此处 await 挂起时，当前事件循环结束，旧事务会被浏览器自动关闭
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    loadedBytes += value.byteLength;
+                    const percent = Math.floor((loadedBytes / totalBytes) * 100);
+                    if (percent !== lastPercent) {
+                        lastPercent = percent;
+                        document.getElementById('loading-text').innerText = `正在导入词库 ${percent}%`;
+                    }
+
+                    buffer += decoder.decode(value, { stream: true });
+
+                    // 收集当前数据块内解出来的词条，在无 await 的同步循环里打包，最后统一开短事务写入
+                    let parsedItems = [];
+
+                    // 智能边界动态滑动窗口：弹性应对超长词条，杜绝一切斩断风险
+                    while (buffer.length > 30000) {
+                        // 使用当前 buffer 长度的 80% 作为解析窗口，留下 20% 作为安全缓冲带
+                        const parseLimit = Math.floor(buffer.length * 0.8);
+                        const chunkToParse = buffer.substring(0, parseLimit);
+                        const kvRegex = /"([^\x00-\x1f"\\]*(?:\\["\\\/bfnrt]|\\u[0-9a-fA-F]{4})*)"\s*:\s*("[^"\\]*(?:\\.[^"\\]*)*"|\{[^\}]+\})/g;
+                        let match;
+                        let lastCutIndex = 0;
+
+                        while ((match = kvRegex.exec(chunkToParse)) !== null) {
+                            let word = match[1].trim().toLowerCase();
+                            let rawVal = match[2].trim();
+                            lastCutIndex = kvRegex.lastIndex;
+                            
+                            if (word === "word" || word === "translation" || word.length < 1) continue;
+
+                            let translation = "";
+                            if (rawVal.startsWith('"')) {
+                                translation = rawVal.slice(1, -1).replace(/\\"/g, '"').replace(/\\n/g, '\n');
+                            } else if (rawVal.startsWith('{')) {
+                                const transMatch = /"translation"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"/.exec(rawVal);
+                                translation = transMatch ? transMatch[1].replace(/\\"/g, '"').replace(/\\n/g, '\n') : rawVal;
+                            }
+
+                            if (word && translation) {
+                                parsedItems.push({ word, translation });
+                            }
+                        }
+                        
+                        if (lastCutIndex > 0) {
+                            // 正常情况：裁掉已经完美解析的合法区段
+                            buffer = buffer.substring(lastCutIndex);
+                        } else {
+                            // 极端情况：遇到了长到离谱的单一词条（超过了 parseLimit 还没有结束）。
+                            // 绝不强行剪裁！直接退出内层循环，去外部继续吸取文件流，让 buffer 胀大，直到吞下整个长词条。
+                            // 为了防止坏文件导致内存无限膨胀崩溃，设置一个 2MB 的物理防爆阀。
+                            if (buffer.length > 2000000) {
+                                console.warn("警告：检测到疑似损坏的 JSON 结构或超 2MB 的变态词条，进行强制垃圾回收");
+                                buffer = buffer.substring(1000000);
+                            }
+                            break;
+                        }
+                    }
+
+                    // 如果当前块有解析出新词条，必须强制等待 IndexedDB 物理写入磁盘完毕再进行下一波
+                    if (parsedItems.length > 0) {
+                        await new Promise((resolve, reject) => {
+                            const blockTx = localDictDb.transaction([DICT_STORE_NAME], "readwrite");
+                            const blockStore = blockTx.objectStore(DICT_STORE_NAME);
+                            
+                            blockTx.oncomplete = () => resolve();
+                            blockTx.onerror = () => reject(blockTx.error);
+                            
+                            for (const item of parsedItems) {
+                                blockStore.put(item);
                                 importedCount++;
                             }
                         });
-                    } 
-                    // 2. 如果是 wordany 的【对象键值对】格式 (Object)
-                    else if (typeof data === 'object' && data !== null) {
-                        for (const [key, val] of Object.entries(data)) {
-                            // 自动提取字符串或对象内部的 translation
-                            const transText = typeof val === 'string' ? val : (val.translation || JSON.stringify(val));
-                            store.put({ 
-                                word: key.toLowerCase(), 
-                                translation: transText 
-                            });
+                        // 事务完成的回调自带异步让权机制，UI 进度条会在这里自然流畅地刷新
+                    }
+                }
+
+                // 3. 补收收尾区段中残留的所有剩余键值对
+                const finalRegex = /"([^\x00-\x1f"\\]*(?:\\["\\\/bfnrt]|\\u[0-9a-fA-F]{4})*)"\s*:\s*("[^"\\]*(?:\\.[^"\\]*)*"|\{[^\}]+\})/g;
+                let fMatch;
+                let finalItems = [];
+                while ((fMatch = finalRegex.exec(buffer)) !== null) {
+                    let word = fMatch[1].trim().toLowerCase();
+                    let rawVal = fMatch[2].trim();
+                    if (word !== "word" && word !== "translation" && word.length >= 1) {
+                        let translation = rawVal.startsWith('"') ? rawVal.slice(1, -1).replace(/\\"/g, '"') : rawVal;
+                        finalItems.push({ word, translation });
+                    }
+                }
+                
+                if (finalItems.length > 0) {
+                    await new Promise((resolve, reject) => {
+                        const finalTx = localDictDb.transaction([DICT_STORE_NAME], "readwrite");
+                        const finalStore = finalTx.objectStore(DICT_STORE_NAME);
+                        finalTx.oncomplete = () => resolve();
+                        finalTx.onerror = () => reject(finalTx.error);
+                        for (const item of finalItems) {
+                            finalStore.put(item);
                             importedCount++;
                         }
-                    }
-                    
-                    tx.oncomplete = () => {
-                        alert(`✅ 智能多模词库导入成功！已成功挂载 ${importedCount} 个词条。`);
-                        if (typeof checkDictDB === 'function') checkDictDB();
-                    };
-                    tx.onerror = () => alert("❌ iPad 沙盒数据库写入失败，请检查剩余空间");
-                } catch (err) { 
-                    alert("❌ 导入失败: JSON 文件解析错误或格式不兼容"); 
-                    console.error(err);
+                    });
                 }
-            };
-            reader.readAsText(file);
+
+                loadingOverlay.style.display = 'none';
+                alert(`✅ 词库流式全量重构成功！共挂载 ${importedCount} 个独立词条。`);
+
+            } catch (err) {
+                loadingOverlay.style.display = 'none';
+                alert("❌ 流式解析内核中断: " + err.message);
+                console.error(err);
+            }
         });
 
         // 0. 初始化离线后台 OCR 引擎（极致兼容本地及主屏幕沙盒环境）
