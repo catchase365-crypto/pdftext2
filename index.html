@@ -545,6 +545,8 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
         let pageObserver = null; // 全局懒加载观察者
         let tesseractWorker = null; // 离线 OCR 线程
         const ocrCache = new Map(); // 🌟 内存级持久化缓存 (防止重绘重复扫描)
+        const renderTimers = new Map(); // 🌟 防抖定时器：防止快速滑动引发疯狂排队
+        const activeRenders = new Map(); // 🌟 渲染任务追踪：用于中途打断释放内存
 
         // 点击偏移校准：正值向下移动点击位置，负值向上移动。如果点高了就调大，点低了就调小。
         const CLICK_Y_OFFSET = 0; 
@@ -1009,13 +1011,37 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
             pageObserver = new IntersectionObserver((entries) => {
                 entries.forEach(entry => {
                     const container = entry.target;
+                    const pageNum = parseInt(container.dataset.pageNumber);
+                    
                     if (entry.isIntersecting) {
                         if (container.dataset.rendered === 'false') {
-                            container.dataset.rendered = 'true';
-                            renderSinglePage(container, parseInt(container.dataset.pageNumber), containerWidth);
+                            // 🚀 核心优化 1：防抖延迟。快速飞过屏幕的页面不予渲染！
+                            if (renderTimers.has(pageNum)) clearTimeout(renderTimers.get(pageNum));
+                            
+                            const timer = setTimeout(() => {
+                                if (container.dataset.rendered === 'false') {
+                                    container.dataset.rendered = 'true';
+                                    renderSinglePage(container, pageNum, containerWidth);
+                                }
+                                renderTimers.delete(pageNum);
+                            }, 150); // 停顿 150 毫秒才认定为“真正停留”
+                            renderTimers.set(pageNum, timer);
                         }
                     } else {
-                        // 核心：自动释放视野外内存，防止崩溃
+                        // 🚀 核心优化 2：页面离开视野，无情打断一切！
+                        // 1. 如果还在排队等渲染，直接取消排队
+                        if (renderTimers.has(pageNum)) {
+                            clearTimeout(renderTimers.get(pageNum));
+                            renderTimers.delete(pageNum);
+                        }
+                        
+                        // 2. 如果 PDF.js 正在底层疯狂计算该页，强行发送中止信号！
+                        if (activeRenders.has(pageNum)) {
+                            activeRenders.get(pageNum).cancel();
+                            activeRenders.delete(pageNum);
+                        }
+
+                        // 3. 释放 DOM 内存
                         if (container.dataset.rendered === 'true') {
                             container.innerHTML = '';
                             container.dataset.rendered = 'false';
@@ -1024,7 +1050,7 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
                 });
             }, { 
                 root: pdfPanel, 
-                rootMargin: '100% 0px 100% 0px' // 缩短预加载范围，兼顾性能与流畅度
+                rootMargin: '100% 0px 100% 0px' // 缓冲范围保持不变，靠防抖拦截无效渲染
             });
 
             // 把所有页面骨架送进观察器
@@ -1084,11 +1110,26 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
                 // 将放大倍数写入渲染引擎的矩阵变换中
                 const transform = outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
 
-                await page.render({ 
+                const renderContext = {
                     canvasContext: context, 
                     transform: transform,
                     viewport: viewport 
-                }).promise;
+                };
+
+                const renderTask = page.render(renderContext);
+                activeRenders.set(pageNum, renderTask);
+
+                try {
+                    await renderTask.promise;
+                } catch (err) {
+                    if (err.name === 'RenderingCancelledException') {
+                        // 成功拦截到底层渲染任务！直接终止后续的 TextLayer 和 OCR 流程
+                        return;
+                    }
+                    throw err; // 其他错误继续抛出
+                } finally {
+                    activeRenders.delete(pageNum);
+                }
 
                 let textContent = await page.getTextContent();
                 
