@@ -420,6 +420,31 @@
             background: rgba(255, 255, 255, 0.05);
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
+
+        /* --- 实时页数进度指示器 --- */
+        .page-indicator {
+            position: fixed;
+            bottom: 30px;
+            left: 30px;
+            background: rgba(15, 23, 42, 0.6);
+            color: var(--color-cursor);
+            padding: 8px 18px;
+            border-radius: 20px;
+            font-size: 1rem;
+            font-weight: bold;
+            font-family: 'Courier New', monospace;
+            z-index: 1000;
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid var(--card-border);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        }
+        .page-indicator.visible {
+            opacity: 1;
+        }
     </style>
 
 
@@ -451,6 +476,7 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
     <div class="main-container">
         
         <div class="pdf-panel" id="pdfPanel">
+            <div id="pageIndicator" class="page-indicator">1 / 1</div>
             <div class="pdf-viewer-content" id="pdfViewerContent">
                 <div class="welcome-box">
                     <p style="font-size: 1.2rem; margin-bottom: 15px;">欢迎使用 PDF 智能点读机</p>
@@ -547,6 +573,7 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
         const ocrCache = new Map(); // 🌟 内存级持久化缓存 (防止重绘重复扫描)
         const renderTimers = new Map(); // 🌟 防抖定时器：防止快速滑动引发疯狂排队
         const activeRenders = new Map(); // 🌟 渲染任务追踪：用于中途打断释放内存
+        let indicatorTimeout = null; // 🌟 页数指示器显示防抖定时器
 
         // 点击偏移校准：正值向下移动点击位置，负值向上移动。如果点高了就调大，点低了就调小。
         const CLICK_Y_OFFSET = 0; 
@@ -904,6 +931,10 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
             ratio = Math.max(0, Math.min(1, ratio)); // 限制在 0-1 之间，不超出屏幕
 
             saturnBtn.style.top = (ratio * 100) + '%';
+            if (currentPdfDoc) {
+                const previewPage = Math.max(1, Math.ceil(ratio * currentPdfDoc.numPages));
+                showPageIndicator(previewPage, currentPdfDoc.numPages);
+            }
             // 移除了拖动中的实时 pdfPanel.scrollTop 更新，改为在 endDrag 中统一触发，防止渲染任务堆积导致闪退
 
             const deltaY = clientY - lastY;
@@ -923,6 +954,18 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
             if (isDragging) moveDrag(e);
         }, {passive: false});
         window.addEventListener('touchend', endDrag);
+
+        // 触发显示页数进度指示器
+        function showPageIndicator(pageNum, total) {
+            const indicator = document.getElementById('pageIndicator');
+            if (!indicator) return;
+            indicator.innerText = `${pageNum} / ${total}`;
+            indicator.classList.add('visible');
+            clearTimeout(indicatorTimeout);
+            indicatorTimeout = setTimeout(() => {
+                indicator.classList.remove('visible');
+            }, 1200);
+        }
 
         // 获取当前视野里最靠上的页面索引，用于重绘后精确定位
         function findCurrentVisiblePage() {
@@ -1324,6 +1367,9 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
                 if (scrollMax <= 0) return;
                 const scrollPercent = (pdfPanel.scrollTop / scrollMax) * 100;
                 saturnBtn.style.top = scrollPercent + '%';
+                
+                // 同步显示左下角页码
+                showPageIndicator(findCurrentVisiblePage(), currentPdfDoc.numPages);
             });
             
             // 动态注入针对安卓/三星系统底层的最强秒开通道指令
