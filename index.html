@@ -99,6 +99,13 @@
             background: #e8dfc4; /* 调深加温后的温润书页色 */
             transition: background 0.3s;
             position: relative;
+            scrollbar-width: none; /* 隐藏原生滚动条 Firefox */
+            -ms-overflow-style: none; /* 隐藏原生滚动条 IE/Edge */
+        }
+
+        /* 隐藏原生滚动条 Chrome/Safari/安卓 */
+        .pdf-panel::-webkit-scrollbar {
+            display: none;
         }
 
         /* 当 PDF 面板处于深色（反色）模式时，底层背景恢复为深色，让闪烁变成暗色闪烁 */
@@ -220,18 +227,36 @@
 
         /* --- 可拖拽分割线 --- */
         .split-divider {
-            width: 6px;
+            width: 0px;
             height: 100%;
-            background: rgba(255, 255, 255, 0.1);
-            cursor: col-resize;
-            transition: background 0.2s;
+            background: transparent;
+            cursor: move;
             position: relative;
-            z-index: 10;
+            z-index: 100;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            outline: none;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
         }
 
-        .split-divider:hover, .split-divider.dragging {
-            background: var(--color-cursor);
-            box-shadow: 0 0 12px var(--color-cursor);
+        .saturn-btn {
+            position: absolute;
+            width: 60px;
+            height: 60px;
+            cursor: grab;
+            filter: drop-shadow(0 0 15px var(--color-cursor));
+            z-index: 101;
+            pointer-events: auto;
+            left: -30px; /* 居中于 0px 的界线上 */
+            top: 50%;
+            transform: translateY(-50%);
+            outline: none;
+            -webkit-tap-highlight-color: transparent;
+            user-select: none;
+            -webkit-user-select: none;
         }
 
         /* 右侧词典边栏 */
@@ -471,7 +496,18 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
             </div>
         </div>
 
-        <div class="split-divider" id="splitDivider"></div>
+        <div class="split-divider" id="splitDivider">
+            <div id="saturnBtn" class="saturn-btn">
+                <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+                    <!-- 土星光环 -->
+                    <ellipse cx="50" cy="50" rx="45" ry="15" fill="none" stroke="var(--color-cursor)" stroke-width="4" transform="rotate(-25 50 50)" opacity="0.8"/>
+                    <!-- 土星本体 -->
+                    <circle cx="50" cy="50" r="22" fill="#f59e0b" />
+                    <!-- 遮挡环的一部分营造立体感 -->
+                    <path d="M 15 40 Q 50 60 85 40" fill="none" stroke="var(--color-cursor)" stroke-width="4" transform="rotate(-25 50 50)" />
+                </svg>
+            </div>
+        </div>
 
         <div class="dict-sidebar" id="dictSidebar">
             <div class="sidebar-header" id="sidebarHeader" style="display: flex; gap: 10px; padding: 15px 24px; position: relative;">
@@ -798,45 +834,92 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
             }
         }
 
-        // 3. 左右滑动分界 (增加平板触摸支持)
+        // 3. 左右滑动分界 (土星控制按钮版)
         let isDragging = false;
-        const startDrag = () => {
+        let canResize = false;
+        let longPressTimer = null;
+        let startY = 0;
+        let lastY = 0;
+        let currentRot = 0;
+        const saturnBtn = document.getElementById('saturnBtn');
+
+        const startDrag = (e) => {
             isDragging = true;
-            splitDivider.classList.add('dragging');
+            canResize = false;
+            const y = e.clientY || (e.touches ? e.touches[0].clientY : 0);
+            startY = y;
+            lastY = y;
+            // 设置0.5秒长按定时器，解锁左右拖动（改变间距）
+            longPressTimer = setTimeout(() => {
+                canResize = true;
+                saturnBtn.style.cursor = 'col-resize';
+            }, 500);
             document.body.style.userSelect = 'none';
-            document.body.style.touchAction = 'none'; // 禁止触摸时的默认滚动
+            document.body.style.touchAction = 'none';
         };
         const endDrag = () => {
             if (isDragging) {
                 isDragging = false;
+                canResize = false;
+                clearTimeout(longPressTimer);
+                saturnBtn.style.cursor = 'grab';
                 splitDivider.classList.remove('dragging');
                 document.body.style.userSelect = '';
                 document.body.style.touchAction = '';
                 if (currentPdfDoc) {
-                    const savedPage = findCurrentVisiblePage();
-                    initVirtualRender(savedPage);
+                    // 松手瞬间根据土星按钮的最终位置计算目标页码并触发虚拟渲染，确保存储和内存安全
+                    const currentRatio = parseFloat(saturnBtn.style.top) / 100;
+                    const targetPage = Math.max(1, Math.ceil(currentRatio * currentPdfDoc.numPages));
+                    initVirtualRender(targetPage);
                 }
             }
         };
-        const moveDrag = (clientX) => {
+        const moveDrag = (e) => {
             if (!isDragging) return;
-            const windowWidth = window.innerWidth;
-            let targetSidebarWidth = windowWidth - clientX;
-            if (targetSidebarWidth < 250) targetSidebarWidth = 250;
-            if (targetSidebarWidth > windowWidth * 0.8) targetSidebarWidth = windowWidth * 0.8;
-            dictSidebar.style.width = targetSidebarWidth + 'px';
+            const clientX = e.clientX || (e.touches ? e.touches[0].clientX : 0);
+            const clientY = e.clientY || (e.touches ? e.touches[0].clientY : 0);
+
+            // 防误触逻辑：如果在等待解锁期间上下移动超过10px，则取消左右拖动解锁
+            if (!canResize && longPressTimer) {
+                if (Math.abs(clientY - startY) > 10) {
+                    clearTimeout(longPressTimer);
+                    longPressTimer = null;
+                }
+            }
+
+            // 左右：仅在长按 0.5s 且无明显上下位移后解锁调节面板宽度功能
+            if (canResize) {
+                const windowWidth = window.innerWidth;
+                let targetSidebarWidth = windowWidth - clientX;
+                if (targetSidebarWidth < 250) targetSidebarWidth = 250;
+                if (targetSidebarWidth > windowWidth * 0.8) targetSidebarWidth = windowWidth * 0.8;
+                dictSidebar.style.width = targetSidebarWidth + 'px';
+            }
+
+            // 上下：绑定 PDF 进度条逻辑
+            const windowHeight = window.innerHeight;
+            let ratio = clientY / windowHeight;
+            ratio = Math.max(0, Math.min(1, ratio)); // 限制在 0-1 之间，不超出屏幕
+
+            saturnBtn.style.top = (ratio * 100) + '%';
+            // 移除了拖动中的实时 pdfPanel.scrollTop 更新，改为在 endDrag 中统一触发，防止渲染任务堆积导致闪退
+
+            const deltaY = clientY - lastY;
+            currentRot += deltaY * 2;
+            saturnBtn.style.transform = `translateY(-50%) rotate(${currentRot}deg)`;
+            lastY = clientY;
         };
 
         // 鼠标事件
         splitDivider.addEventListener('mousedown', startDrag);
-        window.addEventListener('mousemove', (e) => moveDrag(e.clientX));
+        window.addEventListener('mousemove', moveDrag);
         window.addEventListener('mouseup', endDrag);
 
-        // 触摸事件 (平板支持)
-        splitDivider.addEventListener('touchstart', (e) => { startDrag(); }, {passive: true});
+        // 触摸事件
+        splitDivider.addEventListener('touchstart', (e) => { startDrag(e); }, {passive: false});
         window.addEventListener('touchmove', (e) => {
-            if (isDragging) moveDrag(e.touches[0].clientX);
-        }, {passive: true});
+            if (isDragging) moveDrag(e);
+        }, {passive: false});
         window.addEventListener('touchend', endDrag);
 
         // 获取当前视野里最靠上的页面索引，用于重绘后精确定位
@@ -880,6 +963,8 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
 
         async function initVirtualRender(targetPageNum = 1) {
             if (!currentPdfDoc) return;
+            // 重置进度条位置到顶部
+            saturnBtn.style.top = '0%';
             loadingOverlay.style.display = 'block';
             pdfViewerContent.innerHTML = '';
             
@@ -1190,6 +1275,15 @@ window.addEventListener("click", function(){ var d=document.documentElement; (d.
             // 检测 iOS 并开启隐形点读模式
             const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
             if (isIOS) document.body.classList.add('ios-mode');
+
+            // 监听 PDF 滚动，反向同步进度条位置
+            pdfPanel.addEventListener('scroll', () => {
+                if (isDragging || !currentPdfDoc) return;
+                const scrollMax = pdfPanel.scrollHeight - pdfPanel.clientHeight;
+                if (scrollMax <= 0) return;
+                const scrollPercent = (pdfPanel.scrollTop / scrollMax) * 100;
+                saturnBtn.style.top = scrollPercent + '%';
+            });
             
             // 动态注入针对安卓/三星系统底层的最强秒开通道指令
             const picker = document.getElementById('pdf-file-picker');
